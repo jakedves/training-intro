@@ -4,10 +4,11 @@ from typing import List
 
 from xdsl.dialects.builtin import IntegerAttr, StringAttr, ArrayAttr, AnyAttr, FloatAttr
 from xdsl.ir import Data, Operation, ParametrizedAttribute, Dialect, TypeAttribute
-from xdsl.irdl import (AnyOf, Region, Block, irdl_attr_definition,
-                        irdl_op_definition, OpAttr, IRDLOperation)
+from xdsl.irdl import (AnyOf, region_def, Block, Region, irdl_attr_definition,
+                        irdl_op_definition, prop_def, IRDLOperation)
 from xdsl.parser import Parser
 from xdsl.printer import Printer
+from xdsl.traits import NoTerminator, IsTerminator
 
 """
 This is our bespoke Python dialect that we are calling tiny_py. As you will see it is
@@ -15,13 +16,14 @@ rather limited but is sufficient for our needs, and being simple means that we c
 navigate it and understand what is going on.
 """
 
+
 @irdl_attr_definition
 class BoolType(Data[bool]):
     """
     Represents a boolean, MLIR does not by default have a boolean (it uses integer 1 and 0)
     and-so this can be useful in your own dialects
     """
-    name = "bool"
+    name = "tiny_py.bool"
     data: bool
 
     @staticmethod
@@ -39,13 +41,15 @@ class BoolType(Data[bool]):
     def from_bool(data: bool) -> BoolType:
         return BoolType(data)
 
+
 @irdl_attr_definition
 class EmptyType(ParametrizedAttribute, TypeAttribute):
     """
     This represents an empty value, can be useful where you
     need a placeholder to explicitly denote that something is not filled
     """
-    name="empty"
+    name = "tiny_py.empty"
+
 
 @irdl_op_definition
 class Module(IRDLOperation):
@@ -53,16 +57,21 @@ class Module(IRDLOperation):
     A Python module, this is the top level Python container which is a region
     """
     name = "tiny_py.module"
+    traits = frozenset(
+        [
+            NoTerminator(),
+            IsTerminator()
+        ]
+    )
 
-    children: Region
+    children = region_def()
 
-    @staticmethod
-    def get(contents: List[Operation],
-            verify_op: bool = True) -> FileContainer:
-        res = Module.build(regions=[contents])
+    def __init__(self, contents: List[Operation], verify_op: bool = True):
+        super().__init__(regions=[contents])
+
         if verify_op:
-            res.verify(verify_nested_ops=False)
-        return res
+            self.verify(verify_nested_ops=False)
+
 
 @irdl_op_definition
 class Function(IRDLOperation):
@@ -72,31 +81,38 @@ class Function(IRDLOperation):
     attributes and a region for the body
     """
     name = "tiny_py.function"
+    traits = frozenset([NoTerminator()])
 
-    fn_name: OpAttr[StringAttr]
-    args: OpAttr[ArrayAttr]
-    return_var: OpAttr[AnyAttr()]
-    body: Region
+    fn_name = prop_def(StringAttr)
+    args = prop_def(ArrayAttr)
+    return_var = prop_def(AnyAttr())
+    body = region_def()
 
-    @staticmethod
-    def get(fn_name: str | StringAttr,
-            return_var: Operation | None,
-            args: List[Operation],
-            body: List[Operation],
-            verify_op: bool = True) -> Routine:
+    def __init__(
+        self,
+        fn_name: str | StringAttr,
+        return_var: Operation | None,
+        args: List[Operation],
+        body: List[Operation],
+        verify_op: bool = True
+    ):
         if isinstance(fn_name, str):
             # If fn_name is a string then wrap it in StringAttr
-            fn_name=StringAttr(fn_name)
+            fn_name = StringAttr(fn_name)
 
         if return_var is None:
             # If return is None then use the empty token placeholder
-            return_var=EmptyType()
-        res = Function.build(attributes={"fn_name": fn_name, "return_var": return_var,
-                            "args": ArrayAttr(args)}, regions=[Region([Block(body)])])
+            return_var = EmptyType()
+
+        super().__init__(
+            properties={"fn_name": fn_name, "return_var": return_var, "args": ArrayAttr(args)},
+            regions=[Region([Block(body)])]
+        )
+
         if verify_op:
             # We don't verify nested operations since they might have already been verified
-            res.verify(verify_nested_ops=False)
-        return res
+            self.verify(verify_nested_ops=False)
+
 
 @irdl_op_definition
 class Assign(IRDLOperation):
@@ -108,24 +124,25 @@ class Assign(IRDLOperation):
     more flexible, but adds additional complexity in the code so we keep it simple here.
     """
     name = "tiny_py.assign"
+    traits = frozenset([NoTerminator()])
 
-    var_name: OpAttr[StringAttr]
-    value: Region
+    var_name = prop_def(StringAttr)
+    value = region_def()
 
-    @staticmethod
-    def get(var_name: str | StringAttr,
-            value: Operation,
-            verify_op: bool = True) -> Assign:
-
+    def __init__(self,
+                 var_name: str | StringAttr,
+                 value: Operation,
+                 verify_op: bool = True):
         if isinstance(var_name, str):
             # If var_name is a string then wrap it in StringAttr
-            var_name=StringAttr(var_name)
+            var_name = StringAttr(var_name)
 
-        res = Assign.build(attributes={"var_name":var_name}, regions=[Region([Block([value])])])
+        super().__init__(properties={"var_name": var_name}, regions=[Region([Block([value])])])
+
         if verify_op:
             # We don't verify nested operations since they might have already been verified
-            res.verify(verify_nested_ops=False)
-        return res
+            self.verify(verify_nested_ops=False)
+
 
 @irdl_op_definition
 class Loop(IRDLOperation):
@@ -138,26 +155,32 @@ class Loop(IRDLOperation):
     regions (the from and to expressions, and loop body)
     """
     name = "tiny_py.loop"
+    traits = frozenset([NoTerminator()])
 
-    @staticmethod
-    def get(variable: str | StringAttr,
-            from_expr: Operation,
-            to_expr: Operation,
-            body: List[Operation],
-            verify_op: bool = True) -> If:
+    def __init__(self,
+                 variable: str | StringAttr,
+                 from_expr: Operation,
+                 to_expr: Operation,
+                 body: List[Operation],
+                 verify_op: bool = True):
+
         # We need to wrap from_expr and to_expr in lists because they are defined as separate regions
         # and a region is a block with a list of operations. This is not needed for body because it is
         # already a list of operations
         if isinstance(variable, str):
             # If variable is a string then wrap it in StringAttr
-            variable=StringAttr(variable)
+            variable = StringAttr(variable)
 
-        res = Loop.build(attributes={"variable": variable}, regions=[Region([Block([from_expr])]),
-            Region([Block([to_expr])]), Region([Block(body)])])
+        super().__init__(properties={"variable": variable},
+                         regions=[
+                             Region([Block([from_expr])]),
+                             Region([Block([to_expr])]),
+                             Region([Block(body)])
+                         ])
         if verify_op:
             # We don't verify nested operations since they might have already been verified
-            res.verify(verify_nested_ops=False)
-        return res
+            self.verify(verify_nested_ops=False)
+
 
 @irdl_op_definition
 class Var(IRDLOperation):
@@ -168,20 +191,21 @@ class Var(IRDLOperation):
     """
     name = "tiny_py.var"
 
-    variable: OpAttr[StringAttr]
+    variable = prop_def(StringAttr)
 
-    @staticmethod
-    def get(variable : str | StringAttr,
-            verify_op: bool = True) -> If:
+    def __init__(self,
+                 variable: str | StringAttr,
+                 verify_op: bool = True):
+
         if isinstance(variable, str):
             # If variable is a string then wrap it in StringAttr
-            variable=StringAttr(variable)
+            variable = StringAttr(variable)
 
-        res = Var.build(attributes={"variable": variable})
+        super().__init__(properties={"variable": variable})
+
         if verify_op:
             # We don't verify nested operations since they might have already been verified
-            res.verify(verify_nested_ops=False)
-        return res
+            self.verify(verify_nested_ops=False)
 
 @irdl_op_definition
 class BinaryOperation(IRDLOperation):
@@ -190,26 +214,30 @@ class BinaryOperation(IRDLOperation):
     and the LHS and RHS expressions as regions
     """
     name = "tiny_py.binaryoperation"
+    traits = frozenset([NoTerminator()])
 
-    op: OpAttr[StringAttr]
-    lhs: Region
-    rhs: Region
+    op = prop_def(StringAttr)
+    lhs = region_def()
+    rhs = region_def()
 
-    @staticmethod
-    def get(op: str | StringAttr,
-            lhs: Operation,
-            rhs: Operation,
-            verify_op: bool = True) -> BinaryExpr:
+    def __init__(self,
+                 op: str | StringAttr,
+                 lhs: Operation,
+                 rhs: Operation,
+                 verify_op: bool = True):
         if isinstance(op, str):
             # If op is a string then wrap it in StringAttr
-            op=StringAttr(op)
+            op = StringAttr(op)
 
-        res = BinaryOperation.build(attributes={"op": op}, regions=[Region([Block([lhs])]),
-                Region([Block([rhs])])])
+        super().__init__(
+            properties={"op": op},
+            regions=[Region([Block([lhs])]), Region([Block([rhs])])]
+        )
+
         if verify_op:
             # We don't verify nested operations since they might have already been verified
-            res.verify(verify_nested_ops=False)
-        return res
+            self.verify(verify_nested_ops=False)
+
 
 @irdl_op_definition
 class Constant(IRDLOperation):
@@ -217,13 +245,13 @@ class Constant(IRDLOperation):
     A constant value, we currently support integers, floating points, and strings
     """
     name = "tiny_py.constant"
+    value = prop_def(AnyOf([StringAttr, IntegerAttr, FloatAttr]))
 
-    value: OpAttr[AnyOf([StringAttr, IntegerAttr, FloatAttr])]
+    def __init__(self,
+                 value: None | bool | int | str | float,
+                 width: int = 32,
+                 verify_op: bool = True):
 
-    @staticmethod
-    def get(value: None | bool | int | str | float, width=None,
-            verify_op: bool = True) -> Literal:
-        if width is None: width=32
         if type(value) is int:
             attr = IntegerAttr.from_int_and_width(value, width)
         elif type(value) is float:
@@ -232,11 +260,13 @@ class Constant(IRDLOperation):
             attr = StringAttr(value)
         else:
             raise Exception(f"Unknown constant of type {type(value)}")
-        res = Constant.create(attributes={"value": attr})
+
+        super().__init__(properties={"value": attr})
+
         if verify_op:
             # We don't verify nested operations since they might have already been verified
-            res.verify(verify_nested_ops=False)
-        return res
+            self.verify(verify_nested_ops=False)
+
 
 @irdl_op_definition
 class Return(IRDLOperation):
@@ -245,6 +275,7 @@ class Return(IRDLOperation):
     any values/expressions at the moment
     """
     name = "tiny_py.return"
+
 
 @irdl_op_definition
 class CallExpr(IRDLOperation):
@@ -256,43 +287,50 @@ class CallExpr(IRDLOperation):
     and lastly the arguments to pass which are enclosed in a region.
     """
     name = "tiny_py.call_expr"
+    traits = frozenset([NoTerminator()])
 
-    func: OpAttr[StringAttr]
-    builtin: OpAttr[BoolType]
-    type:  OpAttr[AnyOf([AnyAttr(), EmptyType])]
-    args: Region
+    func = prop_def(StringAttr)
+    builtin = prop_def(BoolType)
+    type = prop_def(AnyOf([AnyAttr(), EmptyType]))
+    args = region_def()
 
-    @staticmethod
-    def get(func: str | StringAttr,
-            args: List[Operation],
-            type=EmptyType(),
-            builtin: bool =False,
-            verify_op: bool = True) -> CallExpr:
+    def __init__(self,
+                 func: str | StringAttr,
+                 args: List[Operation],
+                 type=EmptyType(),
+                 builtin: bool = False,
+                 verify_op: bool = True):
 
         if isinstance(func, str):
             # If func is a string then wrap it in StringAttr
-            func=StringAttr(func)
+            func = StringAttr(func)
 
-        builtin=BoolType(builtin)
+        builtin = BoolType(builtin)
 
-        # By default the type is empty attribute as the default is to call as a statement
-        res = CallExpr.build(regions=[Region([Block(args)])], attributes={"func": func, "type": type, "builtin": builtin})
+        super().__init__(
+            regions=[Region([Block(args)])],
+            properties={"func": func, "type": type, "builtin": builtin}
+        )
+
         if verify_op:
             # We don't verify nested operations since they might have already been verified
-            res.verify(verify_nested_ops=False)
-        return res
+            self.verify(verify_nested_ops=False)
 
-tinyPyIR = Dialect([
-    Module,
-    Function,
-    Return,
-    Constant,
-    Assign,
-    Loop,
-    Var,
-    BinaryOperation,
-    CallExpr,
-], [
-    BoolType,
-    EmptyType,
-])
+
+tinyPyIR = Dialect(
+    "tiny_py",
+    [
+        Module,
+        Function,
+        Return,
+        Constant,
+        Assign,
+        Loop,
+        Var,
+        BinaryOperation,
+        CallExpr,
+    ], [
+        BoolType,
+        EmptyType,
+    ]
+)
