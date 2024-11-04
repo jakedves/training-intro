@@ -51,15 +51,15 @@ user@login01:~$ python3.10 ex_one.py
 Congratulations, you have run your first bit of xDSL/MLIR! This won't actually execute the code, but instead builds up an Intermediate Representation (IR) of the code that we wish to compile in that function. The output of this is as follows:
 
 ```
-"builtin.module"() ({
+builtin.module {
   "tiny_py.module"() ({
-    "tiny_py.function"() ({
-      "tiny_py.call_expr"() ({
-        "tiny_py.constant"() {"value" = "Hello world!"} : () -> ()
-      }) {"func" = "print", "type" = !empty, "builtin" = #bool<"True">} : () -> ()
-    }) {"fn_name" = "hello_world", "return_var" = !empty, "args" = []} : () -> ()
+    "tiny_py.function"() <{"fn_name" = "hello_world", "return_var" = !empty, "args" = []}> ({
+      "tiny_py.call_expr"() <{"func" = "print", "type" = !empty, "builtin" = #bool"True"}> ({
+        "tiny_py.constant"() <{"value" = "Hello world!"}> : () -> ()
+      }) : () -> ()
+    }) : () -> ()
   }) : () -> ()
-}) : () -> ()
+}
 ```
 
 Now let's take a look at what this means. Firstly, as we talked about in the initial presentation, all operations are prefixed with the dialect name that they belong to. Here you can see that we are using two dialects, the _builtin_ dialect for the _module_ operation and the _tinypy_ dialect for other operations. Hopefully from looking at this IR representation you can see how it corresponds to the origional Python code, where _tiny_py.function_ defines the _hello_world_ function and _tiny_py.call_expr_ represents the call into the _print_ function, which is using the attributed _builtin_ to represent whether it is a built in Python function or user defined. 
@@ -81,18 +81,17 @@ user@login01:~$ ./tinypy-opt output.mlir -p tiny-py-to-standard
 You will see that the following output will be displayed to screen:
 
 ```
-"builtin.module"() ({
-  "func.func"() ({
-    %0 = "llvm.mlir.addressof"() {"global_name" = @str0} : () -> !llvm.ptr<!llvm.array<13 x i8>>
-    %1 = "llvm.getelementptr"(%0) {"rawConstantIndices" = array<i32: 0, 0>} : (!llvm.ptr<!llvm.array<13 x i8>>) -> !llvm.ptr<i8>
-    "func.call"(%1) {"callee" = @printf} : (!llvm.ptr<i8>) -> ()
-    "func.return"() : () -> ()
-  }) {"sym_name" = "main", "function_type" = () -> (), "sym_visibility" = "public"} : () -> ()
-  "llvm.mlir.global"() ({
-  }) {"global_type" = !llvm.array<13 x i8>, "sym_name" = "str0", "linkage" = #llvm.linkage<"internal">, "addr_space" = 0 : i32, "constant", "value" = "Hello world!\n", "unnamed_addr" = 0 : i64} : () -> ()
-  "func.func"() ({
-  }) {"sym_name" = "printf", "function_type" = (!llvm.ptr<i8>) -> (), "sym_visibility" = "private"} : () -> ()
-}) : () -> ()
+builtin.module {
+  func.func @main() {
+    %0 = "llvm.mlir.addressof"() <{"global_name" = @str0}> : () -> !llvm.ptr<!llvm.array<13 x i8>>
+    %1 = "llvm.getelementptr"(%0) <{"rawConstantIndices" = array<i32: 0, 0>}> : (!llvm.ptr<!llvm.array<13 x i8>>) -> !llvm.ptr<i8>
+    func.call @printf(%1) : (!llvm.ptr<i8>) -> ()
+    func.return
+  }
+  "llvm.mlir.global"() <{"global_type" = !llvm.array<13 x i8>, "sym_name" = "str0", "linkage" = #llvm.linkage<"internal">, "addr_space" = 0 : i32, "constant", "value" = "Hello world!\n", "unnamed_addr" = 0 : i64}> ({
+  }) : () -> ()
+  func.func private @printf(!llvm.ptr<i8>) -> ()
+}
 ```
 
 There are a couple of things going on here, so let's unpack it step by step. Firstly, we are providing the IR stored in the _output.mlir_ file as an input to the _tinypy-opt_ tool. Then, using the _-p_ flag, we are instructing that the _tiny-py-to-standard_ pass should be run over this IR and transform it. 
@@ -119,10 +118,10 @@ Here we are calling the _mlir-opt_ tool, which is part of MLIR, to undertake som
 
 ### Running on ARCHER2
 
-We can execute the _test_ executable direclty on the login node if we wish by (or if you are following the tutorial on your local machine):
+We can execute the _test_ executable directly on the login node if we wish by (or if you are following the tutorial on your local machine):
 
 ```bash
-user@login01:~$ ./test
+user@login01:~$ ./test 
 ```
 
 But being a supercomputer it is also nice to run on the compute nodes too, and indeed we will be needing these in subsequent exercises. A submission script called _sub_ex1.srun_ is prepared that you can submit to the batch queue. 
