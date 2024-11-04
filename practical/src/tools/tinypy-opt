@@ -3,7 +3,7 @@
 import argparse
 import ast
 from io import IOBase
-from xdsl.ir import MLContext
+from xdsl.context import MLContext
 from xdsl.dialects.builtin import ModuleOp
 from tiny_py_to_standard import LowerTinyPyToStandard
 from for_to_parallel import ConvertForToParallel
@@ -12,23 +12,24 @@ from util.semantic_error import SemanticError
 from typing import Callable, Dict, List
 from xdsl.xdsl_opt_main import xDSLOptMain
 
+
 class PsyOptMain(xDSLOptMain):
 
     def register_all_passes(self):
-      super().register_all_passes()
-      self.register_pass(LowerTinyPyToStandard)
-      self.register_pass(ConvertForToParallel)
+        super().register_all_passes()
+        self.register_pass("tiny-py-to-standard", lambda: LowerTinyPyToStandard)
+        self.register_pass("for-to-parallel", lambda: ConvertForToParallel)
 
     def register_all_targets(self):
         super().register_all_targets()
 
     def setup_pipeline(self):
-      super().setup_pipeline()
+        super().setup_pipeline()
 
     def register_all_dialects(self):
         super().register_all_dialects()
         """Register all dialects that can be used."""
-        self.ctx.register_dialect(tinyPyIR)
+        self.ctx.register_dialect("tiny_py", lambda: tinyPyIR)
 
     @staticmethod
     def get_passes_as_dict(
@@ -64,17 +65,13 @@ def __main__():
     psy_main = PsyOptMain()
 
     try:
-        module = psy_main.parse_input()
-        psy_main.apply_passes(module)
+        psy_main.run()
     except SyntaxError as e:
         print(e.get_message())
         exit(0)
     except SemanticError as e:
         print("Semantic error: %s" % str(e))
         exit(0)
-
-    contents = psy_main.output_resulting_program(module)
-    psy_main.print_to_output_stream(contents)
 
 
 if __name__ == "__main__":

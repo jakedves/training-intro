@@ -29,7 +29,7 @@ def python_compile(func):
         # Now we use the xDSL printer to output our built IR to stdio
         printer = Printer(stream=sys.stdout)
         printer.print_op(tiny_py_ir)
-        print("") # Adds a new line
+        print("") # Gives us a new line
 
         f = open("output.mlir", "w")
         printer_file = Printer(stream=f)
@@ -57,7 +57,7 @@ class Analyzer(ast.NodeVisitor):
         Handle assignment, we visit the RHS and then create the tiny_py Assign IR operation
         """
         val=self.visit(node.value)
-        return tiny_py.Assign.get(node.targets[0].id, val)
+        return tiny_py.Assign(node.targets[0].id, val)
 
     def visit_Module(self, node):
         """
@@ -67,7 +67,7 @@ class Analyzer(ast.NodeVisitor):
         contents=[]
         for a in node.body:
             contents.append(self.visit(a))
-        return tiny_py.Module.get(contents)
+        return tiny_py.Module(contents)
 
     def visit_FunctionDef(self, node):
         """
@@ -77,33 +77,44 @@ class Analyzer(ast.NodeVisitor):
         """
         contents=[]
         for a in node.body:
-            contents.append(self.visit(a))
-        return tiny_py.Function.get(node.name, None, [], contents)
+            operation=self.visit(a)
+            if operation is not None:
+                # We only need this check because we return None from our mocked out loop
+                # parser function that you will complete in exercise two,
+                # so we don't want to include that in the operations
+                contents.append(operation)
+        return tiny_py.Function(node.name, None, [], contents)
 
     def visit_Constant(self, node):
         """
         A literal constant value
         """
-        return tiny_py.Constant.get(node.value)
+        return tiny_py.Constant(node.value)
 
     def visit_Name(self, node):
         """
         Variable name
         """
-        return tiny_py.Var.get(node.id)
+        return tiny_py.Var(node.id)
 
     def visit_For(self, node):
         """
         Handles a for loop, note that we make life simpler here by assuming that
         it is in the format for i in range(from, to), and that is where we get
         the from and to expressions.
+
+        This function currently visits all the children in the loop body and
+        appends their operations to the contents list. It also obtains the operations
+        that represent the from and to expressions.
         """
         contents=[]
         for a in node.body:
             contents.append(self.visit(a))
         expr_from=self.visit(node.iter.args[0])
         expr_to=self.visit(node.iter.args[1])
-        return tiny_py.Loop.get(node.target.id, expr_from, expr_to, contents)
+
+        # Now you need to construct the tiny_py Loop and return it
+        return tiny_py.Loop(node.target.id, expr_from, expr_to, contents)
 
     def visit_BinOp(self, node):
         """
@@ -114,7 +125,7 @@ class Analyzer(ast.NodeVisitor):
             raise Exception("Operation "+str(node.op)+" not recognised")
         lhs=self.visit(node.left)
         rhs=self.visit(node.right)
-        return tiny_py.BinaryOperation.get(op_str, lhs, rhs)
+        return tiny_py.BinaryOperation(op_str, lhs, rhs)
 
     def visit_Call(self, node):
         """
@@ -125,7 +136,7 @@ class Analyzer(ast.NodeVisitor):
         for arg in node.args:
             arguments.append(self.visit(arg))
         builtin_fn=self.isFnCallBuiltIn(node.func.id)
-        return tiny_py.CallExpr.get(node.func.id, arguments, builtin=builtin_fn)
+        return tiny_py.CallExpr(node.func.id, arguments, builtin=builtin_fn)
 
     def visit_Expr(self, node):
         """
